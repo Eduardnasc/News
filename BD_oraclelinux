@@ -1,0 +1,30 @@
+version: '3'
+services:
+  oraclelinux:
+    image: oraclelinux:8
+    container_name: oraclelinux-container
+    tty: true
+    stdin_open: true
+    volumes:
+      - ./oracle_scripts:/opt/oracle_scripts
+    command: /bin/bash
+    
+  oracle-db:
+    image: oracleinanutshell/oracle-xe-11g
+    container_name: oracle-db-container
+    environment:
+      - ORACLE_ALLOW_REMOTE=true
+      - ORACLE_ENABLE_XDB=true
+      - ORACLE_PASSWORD=12345678
+    ports:
+      - "1521:1521"
+      - "8080:8080"
+      - "5000:5000"
+    volumes:
+      - ./oracle_data:/u01/app/oracle/oradata
+    networks:
+      - oracle-network
+
+networks:
+  oracle-network:
+    driver: bridge
