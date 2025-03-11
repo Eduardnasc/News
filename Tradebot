@@ -1,0 +1,91 @@
+import tkinter as tk
+from tkinter import messagebox, ttk
+import ccxt
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+
+class TradeBotApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("TradeBot - Binance")
+        self.root.geometry("600x500")
+
+        # Título
+        self.title_label = tk.Label(root, text="TradeBot - Consulta de Dados", font=("Arial", 14))
+        self.title_label.pack(pady=10)
+
+        # Label para seleção do par de moedas
+        self.symbol_label = tk.Label(root, text="Selecione um Par de Moedas:")
+        self.symbol_label.pack(pady=5)
+
+        # Inicializar API Binance para buscar os pares disponíveis
+        self.exchange = ccxt.binance()
+        self.symbols = self.get_available_symbols()
+
+        # Criar ComboBox com os pares de moedas disponíveis
+        self.symbol_combobox = ttk.Combobox(root, values=self.symbols, state="readonly", width=20)
+        self.symbol_combobox.pack(pady=5)
+
+        # Botão para buscar dados
+        self.fetch_button = tk.Button(root, text="Buscar Dados", command=self.fetch_data)
+        self.fetch_button.pack(pady=10)
+
+        # Área de texto para exibir o resultado (Preço e Volume)
+        self.result_text = tk.Label(root, text="", font=("Arial", 12), fg="blue")
+        self.result_text.pack(pady=10)
+
+        # Área para exibir gráfico
+        self.figure, self.ax = plt.subplots(figsize=(5, 3))
+        self.canvas = FigureCanvasTkAgg(self.figure, master=root)
+        self.canvas.get_tk_widget().pack(pady=10)
+
+    def get_available_symbols(self):
+        """Busca todos os pares de moedas disponíveis na Binance"""
+        try:
+            markets = self.exchange.load_markets()
+            return list(markets.keys())  # Retorna uma lista com os pares de moedas
+        except Exception as e:
+            messagebox.showerror("Erro", f"Erro ao carregar pares de moedas: {str(e)}")
+            return []
+
+    def fetch_data(self):
+        """Busca os dados do par de moedas selecionado"""
+        symbol = self.symbol_combobox.get()
+
+        if not symbol:
+            messagebox.showerror("Erro", "Por favor, selecione um par de moedas válido.")
+            return
+
+        try:
+            # Buscar dados do par de moedas
+            ticker = self.exchange.fetch_ticker(symbol)
+            candles = self.exchange.fetch_ohlcv(symbol, timeframe='1m', limit=20)  # 20 últimas velas de 1 min
+
+            # Exibir informações básicas
+            price_info = f"Preço Atual: {ticker['last']:.2f} USDT\nVolume: {ticker['quoteVolume']:.2f}"
+            self.result_text.config(text=price_info)
+
+            # Atualizar o gráfico
+            self.plot_graph(candles, symbol)
+
+        except ccxt.BaseError as e:
+            messagebox.showerror("Erro", f"Erro ao buscar dados: {str(e)}")
+
+    def plot_graph(self, candles, symbol):
+        """Plota o gráfico do histórico de preços"""
+        times = [candle[0] for candle in candles]  # Tempo das velas
+        prices = [candle[4] for candle in candles]  # Preço de fechamento das velas
+
+        self.ax.clear()
+        self.ax.plot(times, prices, marker='o', linestyle='-', color='blue')
+        self.ax.set_title(f"Histórico de Preços - {symbol}")
+        self.ax.set_xlabel("Tempo")
+        self.ax.set_ylabel("Preço")
+        self.ax.grid(True)
+
+        self.canvas.draw()
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = TradeBotApp(root)
+    root.mainloop()
