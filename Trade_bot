@@ -1,0 +1,35 @@
+import ccxt
+import pandas as pd
+import ta
+
+def get_historical_data(symbol, exchange='binance', timeframe='1h', limit=100):
+    exchange = getattr(ccxt, exchange)()
+    ohlcv = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
+    df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+    return df
+
+def analyze_trend(df):
+    df['sma_50'] = ta.trend.sma_indicator(df['close'], window=50)
+    df['sma_200'] = ta.trend.sma_indicator(df['close'], window=200)
+    if df['sma_50'].iloc[-1] > df['sma_200'].iloc[-1]:
+        return "Tendência de alta 📈"
+    else:
+        return "Tendência de baixa 📉"
+
+def chatbot():
+    print("TradeBot: Olá! Digite um par de moedas (ex: BTC/USDT) para análise ou 'sair' para encerrar.")
+    while True:
+        user_input = input("Você: ")
+        if user_input.lower() == 'sair':
+            print("TradeBot: Até mais! 👋")
+            break
+        try:
+            df = get_historical_data(user_input)
+            trend = analyze_trend(df)
+            print(f"TradeBot: {trend}")
+        except Exception as e:
+            print(f"TradeBot: Erro ao buscar dados. Verifique o par de moedas e tente novamente. ({e})")
+
+if __name__ == "__main__":
+    chatbot()
