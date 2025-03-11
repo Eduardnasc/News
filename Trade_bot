@@ -1,6 +1,9 @@
 import ccxt
 import pandas as pd
 import ta
+import dash
+from dash import dcc, html
+import plotly.graph_objects as go
 
 def get_historical_data(symbol, exchange='binance', timeframe='1h', limit=100):
     exchange = getattr(ccxt, exchange)()
@@ -12,22 +15,56 @@ def get_historical_data(symbol, exchange='binance', timeframe='1h', limit=100):
 def analyze_trend(df):
     df['sma_50'] = ta.trend.sma_indicator(df['close'], window=50)
     df['sma_200'] = ta.trend.sma_indicator(df['close'], window=200)
-    if df['sma_50'].iloc[-1] > df['sma_200'].iloc[-1]:
-        return "Tendência de alta 📈"
-    else:
-        return "Tendência de baixa 📉"
+    df['rsi'] = ta.momentum.rsi(df['close'], window=14)
+    macd = ta.trend.macd_diff(df['close'])
+    
+    trend = "Neutro"
+    if df['sma_50'].iloc[-1] > df['sma_200'].iloc[-1] and df['rsi'].iloc[-1] < 70 and macd.iloc[-1] > 0:
+        trend = "Tendência de alta 📈"
+    elif df['sma_50'].iloc[-1] < df['sma_200'].iloc[-1] and df['rsi'].iloc[-1] > 30 and macd.iloc[-1] < 0:
+        trend = "Tendência de baixa 📉"
+    return trend
+
+def create_dashboard(symbol):
+    df = get_historical_data(symbol)
+    trend = analyze_trend(df)
+    
+    app = dash.Dash(__name__)
+    app.layout = html.Div([
+        html.H1(f'Análise de {symbol}'),
+        html.P(f'Tendência Atual: {trend}'),
+        dcc.Graph(
+            figure=go.Figure([
+                go.Candlestick(
+                    x=df['timestamp'],
+                    open=df['open'],
+                    high=df['high'],
+                    low=df['low'],
+                    close=df['close'],
+                    name='Candles'
+                ),
+                go.Scatter(x=df['timestamp'], y=df['sma_50'], mode='lines', name='SMA 50'),
+                go.Scatter(x=df['timestamp'], y=df['sma_200'], mode='lines', name='SMA 200')
+            ])
+        ),
+        dcc.Graph(
+            figure=go.Figure([
+                go.Scatter(x=df['timestamp'], y=df['rsi'], mode='lines', name='RSI')
+            ])
+        )
+    ])
+    return app
 
 def chatbot():
-    print("TradeBot: Olá! Digite um par de moedas (ex: BTC/USDT) para análise ou 'sair' para encerrar.")
+    print("TradeBot: Olá! Digite um par de moedas (ex: BTC/USDT) para abrir o dashboard ou 'sair' para encerrar.")
     while True:
         user_input = input("Você: ")
         if user_input.lower() == 'sair':
             print("TradeBot: Até mais! 👋")
             break
         try:
-            df = get_historical_data(user_input)
-            trend = analyze_trend(df)
-            print(f"TradeBot: {trend}")
+            app = create_dashboard(user_input)
+            app.run_server(debug=True)
         except Exception as e:
             print(f"TradeBot: Erro ao buscar dados. Verifique o par de moedas e tente novamente. ({e})")
 
