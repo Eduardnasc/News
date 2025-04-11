@@ -1,91 +1,259 @@
 import tkinter as tk
 from tkinter import messagebox, ttk
 import ccxt
+import yfinance as yf
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import pandas as pd
 
-class TradeBotApp:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("TradeBot - Binance")
-        self.root.geometry("600x500")
+class TelaLogin:
+    def __init__(self, janela):
+        self.janela = janela
+        self.janela.title("Autenticação - MultiMarket Analyzer")
+        self.janela.geometry("320x220")
+        self.janela.resizable(False, False)
+        self.criar_widgets()
 
-        # Título
-        self.title_label = tk.Label(root, text="TradeBot - Consulta de Dados", font=("Arial", 14))
-        self.title_label.pack(pady=10)
+    def criar_widgets(self):
+        frame_principal = tk.Frame(self.janela, padx=25, pady=25)
+        frame_principal.pack(expand=True)
 
-        # Label para seleção do par de moedas
-        self.symbol_label = tk.Label(root, text="Selecione um Par de Moedas:")
-        self.symbol_label.pack(pady=5)
+        tk.Label(frame_principal, text="Usuário:", font=("Arial", 10)).grid(row=0, column=0, sticky="w", pady=5)
+        self.entry_usuario = tk.Entry(frame_principal, width=25, font=("Arial", 10))
+        self.entry_usuario.grid(row=1, column=0, pady=5)
 
-        # Inicializar API Binance para buscar os pares disponíveis
-        self.exchange = ccxt.binance()
-        self.symbols = self.get_available_symbols()
+        tk.Label(frame_principal, text="Senha:", font=("Arial", 10)).grid(row=2, column=0, sticky="w", pady=5)
+        self.entry_senha = tk.Entry(frame_principal, show="*", width=25, font=("Arial", 10))
+        self.entry_senha.grid(row=3, column=0, pady=5)
 
-        # Criar ComboBox com os pares de moedas disponíveis
-        self.symbol_combobox = ttk.Combobox(root, values=self.symbols, state="readonly", width=20)
-        self.symbol_combobox.pack(pady=5)
+        btn_style = {"width": 10, "bg": "#4CAF50", "fg": "white", "font": ("Arial", 10, "bold")}
+        tk.Button(frame_principal, text="Entrar", command=self.validar_login, **btn_style).grid(row=4, column=0, pady=15)
 
-        # Botão para buscar dados
-        self.fetch_button = tk.Button(root, text="Buscar Dados", command=self.fetch_data)
-        self.fetch_button.pack(pady=10)
+    def validar_login(self):
+        usuarios_validos = {"admin": "admin123", "user": "trade123"}
+        usuario = self.entry_usuario.get()
+        senha = self.entry_senha.get()
 
-        # Área de texto para exibir o resultado (Preço e Volume)
-        self.result_text = tk.Label(root, text="", font=("Arial", 12), fg="blue")
-        self.result_text.pack(pady=10)
+        if usuarios_validos.get(usuario) == senha:
+            self.iniciar_aplicativo_principal()
+        else:
+            messagebox.showerror("Erro", "Credenciais inválidas!")
+            self.entry_senha.delete(0, tk.END)
 
-        # Área para exibir gráfico
-        self.figure, self.ax = plt.subplots(figsize=(5, 3))
-        self.canvas = FigureCanvasTkAgg(self.figure, master=root)
-        self.canvas.get_tk_widget().pack(pady=10)
+    def iniciar_aplicativo_principal(self):
+        for widget in self.janela.winfo_children():
+            widget.destroy()
+        AplicativoMultiMercado(self.janela)
 
-    def get_available_symbols(self):
-        """Busca todos os pares de moedas disponíveis na Binance"""
+class AplicativoMultiMercado:
+    def __init__(self, janela):
+        self.janela = janela
+        self.ativo_selecionado = None
+        self.tipo_mercado = tk.StringVar(value="cripto")
+        self.configurar_janela()
+        self.criar_interface()
+        self.inicializar_apis()
+        self.carregar_ativos()
+
+    def configurar_janela(self):
+        self.janela.title("Global Market Analyzer Pro")
+        self.janela.geometry("1400x900")
+        self.janela.minsize(1200, 800)
+
+    def criar_interface(self):
+        self.frame_principal = tk.Frame(self.janela, padx=25, pady=25)
+        self.frame_principal.pack(fill=tk.BOTH, expand=True)
+
+        self.criar_cabecalho()
+        self.criar_controles()
+        self.criar_area_info()
+        self.inicializar_grafico()
+
+    def criar_cabecalho(self):
+        cabecalho = tk.Frame(self.frame_principal)
+        cabecalho.pack(fill=tk.X, pady=10)
+        
+        tk.Label(cabecalho, 
+                text="Análise de Mercado Global", 
+                font=("Arial", 20, "bold"),
+                fg="#2c3e50").pack(side=tk.LEFT)
+
+        tk.Radiobutton(cabecalho, text="Criptomoedas", variable=self.tipo_mercado,
+                      value="cripto", command=self.mudar_mercado).pack(side=tk.RIGHT, padx=10)
+        tk.Radiobutton(cabecalho, text="Ações/Indices", variable=self.tipo_mercado,
+                      value="acoes", command=self.mudar_mercado).pack(side=tk.RIGHT)
+
+    def criar_controles(self):
+        frame_controles = tk.Frame(self.frame_principal)
+        frame_controles.pack(fill=tk.X, pady=15)
+
+        tk.Label(frame_controles, 
+                text="Pesquisar Ativo:", 
+                font=("Arial", 12)).pack(side=tk.LEFT, padx=5)
+
+        self.entry_pesquisa = tk.Entry(frame_controles, width=50, font=("Arial", 12))
+        self.entry_pesquisa.pack(side=tk.LEFT, padx=5)
+        self.entry_pesquisa.bind("<KeyRelease>", self.atualizar_sugestoes)
+
+        self.combo_ativos = ttk.Combobox(frame_controles, 
+                                       width=80, 
+                                       font=("Arial", 12),
+                                       state="readonly")
+        self.combo_ativos.pack(side=tk.LEFT, padx=5)
+        self.combo_ativos.bind("<<ComboboxSelected>>", self.selecionar_ativo)
+
+        style = {"bg": "#3498db", "fg": "white", "font": ("Arial", 12, "bold"), "width": 15}
+        tk.Button(frame_controles, 
+                 text="Carregar Dados", 
+                 command=self.atualizar_dados,
+                 **style).pack(side=tk.LEFT, padx=10)
+
+    def criar_area_info(self):
+        self.frame_info = tk.Frame(self.frame_principal)
+        self.frame_info.pack(fill=tk.X, pady=15)
+        
+        colunas = ["Setor", "País", "Capitalização", "P/L", "Dividend Yield", "52 Semanas"]
+        self.info_tree = ttk.Treeview(self.frame_info, columns=colunas, show="headings", height=1)
+        
+        for col in colunas:
+            self.info_tree.heading(col, text=col)
+            self.info_tree.column(col, width=120, anchor=tk.CENTER)
+        
+        self.info_tree.pack(fill=tk.X)
+
+    def inicializar_apis(self):
+        self.exchange = ccxt.binance({'enableRateLimit': True})
+        self.carregar_lista_global()
+
+    def carregar_lista_global(self):
         try:
-            markets = self.exchange.load_markets()
-            return list(markets.keys())  # Retorna uma lista com os pares de moedas
+            self.tickers = pd.read_html("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")[0]
+            self.tickers = self.tickers[['Symbol', 'Security']].values.tolist()
+            
+            indices = [
+                ('^GSPC', 'S&P 500'), ('^IXIC', 'NASDAQ'), ('^DJI', 'Dow Jones'),
+                ('^FTSE', 'FTSE 100'), ('^N225', 'Nikkei 225'), ('^HSI', 'Hang Seng'),
+                ('^BVSP', 'IBOVESPA'), ('^MXX', 'IPC Mexico'), ('MSCI', 'MSCI World')
+            ]
+            
+            brasileiras = [
+                ('PETR4.SA', 'Petrobras'), ('VALE3.SA', 'Vale'), ('ITUB4.SA', 'Itaú'),
+                ('BBDC4.SA', 'Bradesco'), ('BBAS3.SA', 'Banco do Brasil')
+            ]
+            
+            self.tickers = indices + brasileiras + self.tickers
+            self.tickers = [(t[0], t[1]) for t in self.tickers if isinstance(t, tuple)]
+            
         except Exception as e:
-            messagebox.showerror("Erro", f"Erro ao carregar pares de moedas: {str(e)}")
-            return []
+            messagebox.showerror("Erro", f"Falha ao carregar lista: {str(e)}")
+            self.tickers = []
 
-    def fetch_data(self):
-        """Busca os dados do par de moedas selecionado"""
-        symbol = self.symbol_combobox.get()
+    def atualizar_sugestoes(self, event=None):
+        pesquisa = self.entry_pesquisa.get().upper()
+        sugeridos = [f"{t[0]} - {t[1]}" for t in self.tickers if pesquisa in t[0] or pesquisa in t[1].upper()]
+        self.combo_ativos['values'] = sugeridos[:100]
 
-        if not symbol:
-            messagebox.showerror("Erro", "Por favor, selecione um par de moedas válido.")
+    def selecionar_ativo(self, event=None):
+        selecao = self.combo_ativos.get()
+        if selecao:
+            self.ativo_selecionado = selecao.split(" - ")[0]
+
+    def mudar_mercado(self):
+        self.entry_pesquisa.delete(0, tk.END)
+        self.combo_ativos.set('')
+        self.limpar_dados()
+
+    def limpar_dados(self):
+        self.info_tree.delete(*self.info_tree.get_children())
+        self.ax.clear()
+        self.canvas.draw()
+
+    def inicializar_grafico(self):
+        self.fig, self.ax = plt.subplots(figsize=(13, 7))
+        self.fig.patch.set_facecolor('#f8f9fa')
+        self.canvas = FigureCanvasTkAgg(self.fig, master=self.frame_principal)
+        self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+    def atualizar_dados(self):
+        if not self.ativo_selecionado:
+            messagebox.showwarning("Aviso", "Selecione um ativo!")
             return
 
+        if self.tipo_mercado.get() == "cripto":
+            self.atualizar_cripto()
+        else:
+            self.atualizar_acao()
+
+    def atualizar_cripto(self):
         try:
-            # Buscar dados do par de moedas
-            ticker = self.exchange.fetch_ticker(symbol)
-            candles = self.exchange.fetch_ohlcv(symbol, timeframe='1m', limit=20)  # 20 últimas velas de 1 min
-
-            # Exibir informações básicas
-            price_info = f"Preço Atual: {ticker['last']:.2f} USDT\nVolume: {ticker['quoteVolume']:.2f}"
-            self.result_text.config(text=price_info)
-
-            # Atualizar o gráfico
-            self.plot_graph(candles, symbol)
-
+            ticker = self.exchange.fetch_ticker(self.ativo_selecionado)
+            candles = self.exchange.fetch_ohlcv(self.ativo_selecionado, timeframe='4h', limit=100)
+            self.exibir_infos_cripto(ticker)
+            self.plotar_grafico(candles, self.ativo_selecionado)
         except ccxt.BaseError as e:
-            messagebox.showerror("Erro", f"Erro ao buscar dados: {str(e)}")
+            messagebox.showerror("Erro", f"Erro na conexão: {str(e)}")
 
-    def plot_graph(self, candles, symbol):
-        """Plota o gráfico do histórico de preços"""
-        times = [candle[0] for candle in candles]  # Tempo das velas
-        prices = [candle[4] for candle in candles]  # Preço de fechamento das velas
+    def atualizar_acao(self):
+        try:
+            acao = yf.Ticker(self.ativo_selecionado)
+            hist = acao.history(period='5y')
+            info = acao.info
+            
+            if hist.empty:
+                raise ValueError("Dados não disponíveis")
+            
+            self.exibir_infos_acao(info)
+            self.plotar_grafico_acao(hist)
+        except Exception as e:
+            messagebox.showerror("Erro", f"Falha ao buscar dados: {str(e)}")
 
+    def exibir_infos_cripto(self, dados):
+        self.info_tree.delete(*self.info_tree.get_children())
+        valores = [
+            "Criptomoeda",
+            "Global",
+            f"${dados['quoteVolume']:,.2f}",
+            "N/A",
+            "N/A",
+            f"{dados['high']:.2f} / {dados['low']:.2f}"
+        ]
+        self.info_tree.insert("", "end", values=valores)
+
+    def exibir_infos_acao(self, info):
+        self.info_tree.delete(*self.info_tree.get_children())
+        valores = [
+            info.get('sector', 'N/A'),
+            info.get('country', 'N/A'),
+            f"${info.get('marketCap', 'N/A'):,}" if info.get('marketCap') else 'N/A',
+            f"{info.get('trailingPE', 'N/A'):.2f}" if info.get('trailingPE') else 'N/A',
+            f"{info.get('dividendYield', 'N/A')*100:.2f}%" if info.get('dividendYield') else 'N/A',
+            f"{info.get('fiftyTwoWeekHigh', 'N/A'):.2f} / {info.get('fiftyTwoWeekLow', 'N/A'):.2f}"
+        ]
+        self.info_tree.insert("", "end", values=valores)
+
+    def plotar_grafico(self, candles, simbolo):
         self.ax.clear()
-        self.ax.plot(times, prices, marker='o', linestyle='-', color='blue')
-        self.ax.set_title(f"Histórico de Preços - {symbol}")
-        self.ax.set_xlabel("Tempo")
-        self.ax.set_ylabel("Preço")
-        self.ax.grid(True)
+        tempos = pd.to_datetime([candle[0] for candle in candles], unit='ms')
+        precos = [candle[4] for candle in candles]
 
+        self.ax.plot(tempos, precos, color='#2980b9', linewidth=2)
+        self.formatar_grafico(simbolo, "Criptomoeda")
+
+    def plotar_grafico_acao(self, hist):
+        self.ax.clear()
+        self.ax.plot(hist.index, hist['Close'], color='#27ae60', linewidth=2)
+        self.formatar_grafico(self.ativo_selecionado, "Ação/Índice")
+
+    def formatar_grafico(self, titulo, tipo):
+        self.ax.set_title(f"{tipo} - {titulo}", fontsize=16, pad=25)
+        self.ax.set_xlabel("Período", fontsize=12)
+        self.ax.set_ylabel("Preço (USD)", fontsize=12)
+        self.ax.grid(color='#d1d8e0', linestyle='--', linewidth=0.5)
+        self.ax.tick_params(axis='both', which='major', labelsize=10)
+        self.fig.autofmt_xdate()
         self.canvas.draw()
 
 if __name__ == "__main__":
     root = tk.Tk()
-    app = TradeBotApp(root)
+    app = TelaLogin(root)
     root.mainloop()
