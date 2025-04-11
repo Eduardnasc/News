@@ -5,6 +5,7 @@ import yfinance as yf
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import pandas as pd
+import threading
 
 class TelaLogin:
     def __init__(self, janela):
@@ -50,10 +51,34 @@ class AplicativoMultiMercado:
         self.janela = janela
         self.ativo_selecionado = None
         self.tipo_mercado = tk.StringVar(value="cripto")
+        self.assets = [
+            # Criptomoedas
+            ("BTC/USDT", "Bitcoin"),
+            ("ETH/USDT", "Ethereum"),
+            ("BNB/USDT", "Binance Coin"),
+            ("XRP/USDT", "Ripple"),
+            ("ADA/USDT", "Cardano"),
+            ("SOL/USDT", "Solana"),
+            ("DOT/USDT", "Polkadot"),
+            ("DOGE/USDT", "Dogecoin"),
+            ("AVAX/USDT", "Avalanche"),
+            ("MATIC/USDT", "Polygon"),
+            # Ações
+            ("AAPL", "Apple"),
+            ("MSFT", "Microsoft"),
+            ("GOOGL", "Google"),
+            ("AMZN", "Amazon"),
+            ("TSLA", "Tesla"),
+            ("PETR4.SA", "Petrobras"),
+            ("VALE3.SA", "Vale"),
+            ("ITUB4.SA", "Itaú Unibanco"),
+            ("BBDC4.SA", "Bradesco"),
+            ("NVDA", "NVIDIA")
+        ]
+        self.selected_asset = tk.StringVar()
         self.configurar_janela()
         self.criar_interface()
         self.inicializar_apis()
-        self.carregar_ativos()
 
     def configurar_janela(self):
         self.janela.title("Global Market Analyzer Pro")
@@ -88,23 +113,22 @@ class AplicativoMultiMercado:
         frame_controles.pack(fill=tk.X, pady=15)
 
         tk.Label(frame_controles, 
-                text="Pesquisar Ativo:", 
+                text="Selecione um Ativo:", 
                 font=("Arial", 12)).pack(side=tk.LEFT, padx=5)
 
-        self.entry_pesquisa = tk.Entry(frame_controles, width=50, font=("Arial", 12))
-        self.entry_pesquisa.pack(side=tk.LEFT, padx=5)
-        self.entry_pesquisa.bind("<KeyRelease>", self.atualizar_sugestoes)
-
         self.combo_ativos = ttk.Combobox(frame_controles, 
-                                       width=80, 
+                                       textvariable=self.selected_asset,
+                                       width=30, 
                                        font=("Arial", 12),
                                        state="readonly")
+        self.combo_ativos['values'] = [f"{asset[0]} - {asset[1]}" for asset in self.assets]
         self.combo_ativos.pack(side=tk.LEFT, padx=5)
+        self.combo_ativos.current(0)
         self.combo_ativos.bind("<<ComboboxSelected>>", self.selecionar_ativo)
 
         style = {"bg": "#3498db", "fg": "white", "font": ("Arial", 12, "bold"), "width": 15}
         tk.Button(frame_controles, 
-                 text="Carregar Dados", 
+                 text="Atualizar Dados", 
                  command=self.atualizar_dados,
                  **style).pack(side=tk.LEFT, padx=10)
 
@@ -123,43 +147,13 @@ class AplicativoMultiMercado:
 
     def inicializar_apis(self):
         self.exchange = ccxt.binance({'enableRateLimit': True})
-        self.carregar_lista_global()
-
-    def carregar_lista_global(self):
-        try:
-            self.tickers = pd.read_html("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")[0]
-            self.tickers = self.tickers[['Symbol', 'Security']].values.tolist()
-            
-            indices = [
-                ('^GSPC', 'S&P 500'), ('^IXIC', 'NASDAQ'), ('^DJI', 'Dow Jones'),
-                ('^FTSE', 'FTSE 100'), ('^N225', 'Nikkei 225'), ('^HSI', 'Hang Seng'),
-                ('^BVSP', 'IBOVESPA'), ('^MXX', 'IPC Mexico'), ('MSCI', 'MSCI World')
-            ]
-            
-            brasileiras = [
-                ('PETR4.SA', 'Petrobras'), ('VALE3.SA', 'Vale'), ('ITUB4.SA', 'Itaú'),
-                ('BBDC4.SA', 'Bradesco'), ('BBAS3.SA', 'Banco do Brasil')
-            ]
-            
-            self.tickers = indices + brasileiras + self.tickers
-            self.tickers = [(t[0], t[1]) for t in self.tickers if isinstance(t, tuple)]
-            
-        except Exception as e:
-            messagebox.showerror("Erro", f"Falha ao carregar lista: {str(e)}")
-            self.tickers = []
-
-    def atualizar_sugestoes(self, event=None):
-        pesquisa = self.entry_pesquisa.get().upper()
-        sugeridos = [f"{t[0]} - {t[1]}" for t in self.tickers if pesquisa in t[0] or pesquisa in t[1].upper()]
-        self.combo_ativos['values'] = sugeridos[:100]
 
     def selecionar_ativo(self, event=None):
-        selecao = self.combo_ativos.get()
+        selecao = self.selected_asset.get()
         if selecao:
             self.ativo_selecionado = selecao.split(" - ")[0]
 
     def mudar_mercado(self):
-        self.entry_pesquisa.delete(0, tk.END)
         self.combo_ativos.set('')
         self.limpar_dados()
 
@@ -179,6 +173,9 @@ class AplicativoMultiMercado:
             messagebox.showwarning("Aviso", "Selecione um ativo!")
             return
 
+        threading.Thread(target=self._atualizar_dados_thread, daemon=True).start()
+
+    def _atualizar_dados_thread(self):
         if self.tipo_mercado.get() == "cripto":
             self.atualizar_cripto()
         else:
@@ -188,10 +185,10 @@ class AplicativoMultiMercado:
         try:
             ticker = self.exchange.fetch_ticker(self.ativo_selecionado)
             candles = self.exchange.fetch_ohlcv(self.ativo_selecionado, timeframe='4h', limit=100)
-            self.exibir_infos_cripto(ticker)
-            self.plotar_grafico(candles, self.ativo_selecionado)
+            self.janela.after(0, lambda: self.exibir_infos_cripto(ticker))
+            self.janela.after(0, lambda: self.plotar_grafico(candles, self.ativo_selecionado))
         except ccxt.BaseError as e:
-            messagebox.showerror("Erro", f"Erro na conexão: {str(e)}")
+            self.janela.after(0, lambda: messagebox.showerror("Erro", f"Erro na conexão: {str(e)}"))
 
     def atualizar_acao(self):
         try:
@@ -202,10 +199,10 @@ class AplicativoMultiMercado:
             if hist.empty:
                 raise ValueError("Dados não disponíveis")
             
-            self.exibir_infos_acao(info)
-            self.plotar_grafico_acao(hist)
+            self.janela.after(0, lambda: self.exibir_infos_acao(info))
+            self.janela.after(0, lambda: self.plotar_grafico_acao(hist))
         except Exception as e:
-            messagebox.showerror("Erro", f"Falha ao buscar dados: {str(e)}")
+            self.janela.after(0, lambda: messagebox.showerror("Erro", f"Falha ao buscar dados: {str(e)}"))
 
     def exibir_infos_cripto(self, dados):
         self.info_tree.delete(*self.info_tree.get_children())
