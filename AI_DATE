@@ -1,0 +1,97 @@
+from flask import Flask, render_template, request, jsonify, session
+import random
+import json
+import os
+from datetime import datetime
+from functools import lru_cache
+
+app = Flask(__name__)
+app.secret_key = 'super_secret_key'  # Em prod, use variável de ambiente!
+
+CHARACTERS_DIR = 'characters'
+
+# Cache básico pra não ficar lendo arquivo toda hora
+@lru_cache(maxsize=1)
+def load_characters():
+    if not os.path.exists(CHARACTERS_DIR):
+        os.makedirs(CHARACTERS_DIR)
+        return []
+
+    characters = []
+    for filename in os.listdir(CHARACTERS_DIR):
+        if filename.endswith('.json'):
+            with open(os.path.join(CHARACTERS_DIR, filename), 'r', encoding='utf-8') as f:
+                characters.append(json.load(f))
+    return characters
+
+class DatingAI:
+    def __init__(self, character):
+        self.character = character
+        self.memory = []
+        self.relationship_level = 0
+
+    def respond(self, message):
+        responses = self.character.get('responses', {})
+        matched_response = self._match_response(message, responses)
+
+        self.update_relationship(1 if matched_response else 0.5)
+        self.remember(message, matched_response)
+        return matched_response
+
+    def _match_response(self, message, responses):
+        for pattern in responses.get('patterns', {}):
+            if pattern.lower() in message.lower():
+                return random.choice(responses['patterns'][pattern])
+        return random.choice(responses.get('default', ["..."]))
+
+    def update_relationship(self, points):
+        self.relationship_level += points
+
+    def remember(self, user_msg, ai_response):
+        self.memory.append({
+            'time': datetime.now().strftime("%H:%M"),
+            'user': user_msg,
+            'ai': ai_response
+        })
+
+    def get_last_memories(self, n=5):
+        return self.memory[-n:]
+
+# --- Rotas ---
+@app.route('/')
+def home():
+    return render_template('index.html', characters=load_characters())
+
+@app.route('/chat/<int:character_id>')
+def chat(character_id):
+    characters = load_characters()
+    if character_id >= len(characters):
+        return "Personagem não encontrado", 404
+    return render_template('chat.html', character=characters[character_id])
+
+@app.route('/api/chat', methods=['POST'])
+def api_chat():
+    data = request.get_json()
+    character_id = data.get('character_id')
+    message = data.get('message')
+
+    if character_id is None or message is None:
+        return jsonify({'error': 'Dados inválidos'}), 400
+
+    characters = load_characters()
+    if character_id >= len(characters):
+        return jsonify({'error': 'Personagem não encontrado'}), 404
+
+    # Instancia temporária da IA — simples e funcional
+    ai = DatingAI(characters[character_id])
+    response = ai.respond(message)
+
+    return jsonify({
+        'response': response,
+        'relationship_level': ai.relationship_level,
+        'memory': ai.get_last_memories()
+    })
+
+# --- Inicialização ---
+if __name__ == '__main__':
+    app.run(host='127.0.0.1', port=5000, debug=True, use_reloader=False)
