@@ -1,0 +1,196 @@
+import subprocess
+import json
+import multiprocessing
+import psutil
+import GPUtil
+import platform
+import time
+
+class HardwareAnalyzer:
+    def get_cpu_info(self):
+        """Coleta informações detalhadas da CPU"""
+        try:
+            cpu_info = {
+                "physical_cores": psutil.cpu_count(logical=False),
+                "logical_cores": psutil.cpu_count(logical=True),
+                "max_freq": psutil.cpu_freq().max,
+                "architecture": platform.machine(),
+                "name": platform.processor()
+            }
+            
+            # Detecção de microarquitetura para Intel/AMD
+            if "Intel" in cpu_info["name"]:
+                if any(name in cpu_info["name"] for name in ["i9", "i7"]):
+                    cpu_info["recommended_threads"] = cpu_info["physical_cores"] * 2
+                else:
+                    cpu_info["recommended_threads"] = cpu_info["physical_cores"]
+            else:
+                cpu_info["recommended_threads"] = cpu_info["logical_cores"] - 1
+            
+            return cpu_info
+        except:
+            return {"error": "Não foi possível detectar CPU"}
+
+    def get_gpu_info(self):
+        """Detecta e classifica GPUs compatíveis"""
+        gpus = []
+        try:
+            for gpu in GPUtil.getGPUs():
+                gpu_info = {
+                    "id": gpu.id,
+                    "name": gpu.name,
+                    "memory_total": gpu.memoryTotal,
+                    "driver": gpu.driver,
+                    "is_cuda": "nvidia" in gpu.name.lower(),
+                    "is_opencl": "amd" in gpu.name.lower()
+                }
+                
+                # Configurações recomendadas por arquitetura
+                if "RTX 30" in gpu.name or "RTX 40" in gpu.name:
+                    gpu_info.update({
+                        "cuda_threads": 1024,
+                        "bfactor": 11,
+                        "bsleep": 50
+                    })
+                elif "RX 6" in gpu.name or "RX 7" in gpu.name:
+                    gpu_info.update({
+                        "opencl_intensity": 64,
+                        "worksize": 16
+                    })
+                
+                gpus.append(gpu_info)
+            return gpus
+        except:
+            return []
+
+class AutoTunedMiner:
+    def __init__(self, wallet_address):
+        self.wallet = wallet_address
+        self.analyzer = HardwareAnalyzer()
+        self.config = {
+            "autosave": True,
+            "donate-level": 1,
+            "randomx-mode": "fast",
+            "health-print-time": 60
+        }
+
+    def generate_config(self):
+        """Gera configuração otimizada automaticamente"""
+        # Analisar hardware
+        cpu = self.analyzer.get_cpu_info()
+        gpus = self.analyzer.get_gpu_info()
+        
+        # Configuração da CPU
+        self.config["cpu"] = {
+            "enabled": True,
+            "threads": cpu.get("recommended_threads", max(1, multiprocessing.cpu_count() - 2)),
+            "priority": 2 if cpu.get("physical_cores", 0) > 4 else 1,
+            "asm": True,
+            "argon2-impl": None,
+            "rx": [0, 1]
+        }
+        
+        # Configuração para GPUs NVIDIA (CUDA)
+        cuda_devices = [gpu["id"] for gpu in gpus if gpu.get("is_cuda")]
+        if cuda_devices:
+            self.config["cuda"] = {
+                "enabled": True,
+                "loader": "xmrig-cuda.dll",
+                "devices": cuda_devices,
+                "bfactor": 8,
+                "bsleep": 100,
+                "max-threads": 512
+            }
+        
+        # Configuração para GPUs AMD (OpenCL)
+        opencl_devices = [gpu["id"] for gpu in gpus if gpu.get("is_opencl")]
+        if opencl_devices:
+            self.config["opencl"] = {
+                "enabled": True,
+                "loader": "xmrig-opencl.dll",
+                "platform": "AMD",
+                "devices": opencl_devices,
+                "cache": True
+            }
+        
+        # Pool recomendado com failover
+        self.config["pools"] = [
+            {
+                "url": "gulf.moneroocean.stream:10128",
+                "user": self.wallet,
+                "pass": "x",
+                "tls": False
+            },
+            {
+                "url": "pool.supportxmr.com:3333",
+                "user": self.wallet,
+                "pass": "x",
+                "tls": False
+            }
+        ]
+        
+        return self.config
+
+    def start_mining(self):
+        """Inicia a mineração com configuração otimizada"""
+        config = self.generate_config()
+        
+        # Salvar configuração
+        with open("config_auto.json", "w") as f:
+            json.dump(config, f, indent=4)
+        
+        # Comando de inicialização
+        cmd = ["./xmrig", "-c", "config_auto.json"]
+        
+        try:
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True
+            )
+            
+            # Monitoramento em tempo real
+            while True:
+                output = process.stdout.readline()
+                if output == '' and process.poll() is not None:
+                    break
+                if output:
+                    print(output.strip())
+                time.sleep(1)
+                
+        except KeyboardInterrupt:
+            process.terminate()
+            print("\nMinerador encerrado pelo usuário")
+
+if __name__ == "__main__":
+    print("""
+    ███╗   ███╗██╗███╗   ██╗███████╗██████╗ 
+    ████╗ ████║██║████╗  ██║██╔════╝██╔══██╗
+    ██╔████╔██║██║██╔██╗ ██║█████╗  ██████╔╝
+    ██║╚██╔╝██║██║██║╚██╗██║██╔══╝  ██╔══██╗
+    ██║ ╚═╝ ██║██║██║ ╚████║███████╗██║  ██║
+    ╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝
+    Auto-Optimized Miner v2.1
+    """)
+    
+    wallet = input("Digite seu endereço Monero: ").strip()
+    miner = AutoTunedMiner(wallet)
+    
+    print("\n[+] Analisando hardware...")
+    cpu_info = miner.analyzer.get_cpu_info()
+    gpu_info = miner.analyzer.get_gpu_info()
+    
+    print(f"\n[+] CPU Detectada: {cpu_info.get('name', 'Desconhecida')}")
+    print(f"    Núcleos Físicos: {cpu_info.get('physical_cores')}")
+    print(f"    Threads Recomendados: {cpu_info.get('recommended_threads')}")
+    
+    if gpu_info:
+        print("\n[+] GPUs Detectadas:")
+        for gpu in gpu_info:
+            print(f"    {gpu['id']}: {gpu['name']} ({'CUDA' if gpu['is_cuda'] else 'OpenCL'})")
+    else:
+        print("\n[-] Nenhuma GPU compatível detectada")
+    
+    print("\n[+] Iniciando mineração com configuração otimizada...")
+    miner.start_mining()
